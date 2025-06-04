@@ -24,7 +24,12 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
           indexedAt: new Date().toISOString(),
         }
       })
-
+    
+    // ここでログ出力（件数）
+    console.log(
+      `[Firehose] Received: ${ops.posts.creates.length} creates, ${ops.posts.deletes.length} deletes. Filtered (alf): ${postsToCreate.length}`
+    )
+    
     if (postsToDelete.length > 0) {
       await this.db
         .deleteFrom('post')
