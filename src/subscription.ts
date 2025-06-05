@@ -161,8 +161,8 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
     }
 
     // 🔁 Repost対象の元ポストを取得
-    for (let i = 0; i < repostSubjects.length; i += 25) {
-      const batch = repostSubjects.slice(i, i + 25)
+    for (let i = 0; i < repostSubjects.length; i += 10) {
+      const batch = repostSubjects.slice(i, i + 10)
       const uris = batch.map((item) => item.originalUri)
 
       try {
