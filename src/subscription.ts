@@ -79,7 +79,8 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
       }
 
       console.log(`[fetchAllowedDids] Retrieved ${newSet.size} DIDs:`)
-
+      console.log('Memory usage:', process.memoryUsage())
+      
       this.allowedDids = newSet
       this.lastFetched = now
       return newSet
