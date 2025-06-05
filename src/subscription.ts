@@ -36,7 +36,7 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
   // DIDリストキャッシュ
   private allowedDids = new Set<string>()
   private lastFetched = 0
-  private fetchInterval = 60 * 60 * 1000 // 60分
+  private fetchInterval = 5 * 60 * 1000
   private retryDelay = 5000 // 5秒
   private instanceId = Math.random().toString(36).substring(2, 8)
 
