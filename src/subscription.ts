@@ -13,78 +13,177 @@ dotenv.config()
 export class FirehoseSubscription extends FirehoseSubscriptionBase {
   private agent: AtpAgent
   private listUri: string
-
   constructor(db: any, endpoint: string) {
     super(db, endpoint)
     this.agent = new AtpAgent({ service: 'https://bsky.social' })
     this.listUri = process.env.FEED_LIST_URI!
   }
 
-  // 毎回、リストからユーザーDIDを取得
+  async run(delayMs: number = 3000) {
+    await this.agent.login({
+      identifier: process.env.FEEDGEN_PUBLISHER_HANDLE!,
+      password: process.env.FEEDGEN_PUBLISH_APP_PASSWORD!,
+    })
+    console.log('Logged in')
+    await this.fetchAllowedDids()
+    setInterval(() => {
+      this.fetchAllowedDids().catch((err) =>
+        console.error('[fetchAllowedDids] periodic error:', err),
+      )
+    }, this.fetchInterval)
+    super.run(delayMs)
+  }
+  // DIDリストキャッシュ
+  private allowedDids = new Set<string>()
+  private lastFetched = 0
+  private fetchInterval = 60 * 60 * 1000 // 60分
+  private retryDelay = 5000 // 5秒
+  private instanceId = Math.random().toString(36).substring(2, 8)
+
   private async fetchAllowedDids(): Promise<Set<string>> {
-    const allowedDids = new Set<string>()
-    const res = await this.agent.app.bsky.graph.getList({
-      list: this.listUri,
-      limit: 200,
-    })
-    res.data.items.forEach((item) => {
-      allowedDids.add(item.subject.did)
-    })
-    return allowedDids
+    const now = Date.now()
+    console.log(
+      `[fetchAllowedDids] Called at ${new Date(
+        now,
+      ).toISOString()} by instance ${this.instanceId}`,
+    )
+
+    const isInitialFetch = this.lastFetched === 0
+
+    if (
+      !isInitialFetch &&
+      now - this.lastFetched < this.fetchInterval &&
+      this.allowedDids.size > 0
+    ) {
+      console.log(
+        `[fetchAllowedDids] Using cached DIDs — instance ${this.instanceId}`,
+      )
+      return this.allowedDids
+    }
+
+    try {
+      const res = await this.agent.app.bsky.graph.getList({
+        list: this.listUri,
+        limit: 100,
+      })
+
+      const newSet = new Set<string>()
+      res.data.items.forEach((item) => {
+        newSet.add(item.subject.did)
+      })
+
+      if (newSet.size === 0 && isInitialFetch) {
+        throw new Error(
+          `[fetchAllowedDids] Empty list returned on initial fetch`,
+        )
+      }
+
+      console.log(`[fetchAllowedDids] Retrieved ${newSet.size} DIDs:`)
+      console.log(Array.from(newSet))
+
+      this.allowedDids = newSet
+      this.lastFetched = now
+      return newSet
+    } catch (err: any) {
+      if (err.status === 429) {
+        console.warn(
+          `[RateLimit] 429 received. Retrying after ${this.retryDelay / 1000}s`,
+        )
+        await new Promise((res) => setTimeout(res, this.retryDelay))
+        return this.fetchAllowedDids()
+      }
+
+      console.error(`[fetchAllowedDids] Unexpected error`, err)
+
+      if (isInitialFetch) {
+        throw new Error(
+          `[fetchAllowedDids] Failed to fetch DID list on startup`,
+        )
+      }
+
+      return this.allowedDids // fallback: use stale
+    }
   }
 
   async handleEvent(evt: RepoEvent) {
     if (!isCommit(evt)) return
 
-    const allowedDids = await this.fetchAllowedDids()
-    const ops = await getOpsByType(evt)
+    const allowedDids = this.allowedDids
+    if (!allowedDids || allowedDids.size === 0) {
+      console.warn(`[handleEvent] DID list not loaded yet or empty, skipping`)
+      return
+    }
 
+    const ops = await getOpsByType(evt)
     const postsToDelete = ops.posts.deletes.map((del) => del.uri)
     const postsToCreate = []
+
+    const repostSubjects: {
+      uri: string
+      author: string
+      originalUri: string
+    }[] = []
 
     for (const create of ops.posts.creates) {
       const authorDid = create.author
       if (!allowedDids.has(authorDid)) continue
 
       let hasImage = false
-      const record = create.record as AppBskyFeedPost.Record
-      // 通常投稿の画像判定
-      if (
-        record.embed &&
-        record.embed.$type === 'app.bsky.embed.images' &&
-        Array.isArray(record.embed.images) &&
-        record.embed.images.length > 0
-      ) {
-        hasImage = true
-      }
-      // ↓ 前提：まだ hasImage が false のときだけ処理
-      if (!hasImage && create.record.$type === 'app.bsky.feed.repost') {
-        const repostRecord =
-          create.record as unknown as AppBskyFeedRepost.Record
-        const subjectUri = repostRecord.subject?.uri
+      const record = create.record
 
-        if (subjectUri) {
-          // 元投稿を取得して embed を確認
-          const originalPostResp = await this.agent.app.bsky.feed.getPosts({
-            uris: [subjectUri],
-          })
-
-          const originalPost = originalPostResp.data.posts[0]
-          const origEmbed = originalPost?.embed
-
-          if (
-            origEmbed &&
-            origEmbed.$type === 'app.bsky.embed.images' &&
-            Array.isArray(origEmbed.images) &&
-            origEmbed.images.length > 0
-          ) {
-            hasImage = true
-          }
+      if (record.$type === 'app.bsky.feed.post') {
+        const postRecord = record as AppBskyFeedPost.Record
+        if (
+          postRecord.embed &&
+          postRecord.embed.$type === 'app.bsky.embed.images' &&
+          Array.isArray(postRecord.embed.images) &&
+          postRecord.embed.images.length > 0
+        ) {
+          hasImage = true
         }
+      } else if (record.$type === 'app.bsky.feed.repost') {
+        const repostRecord = record as unknown as AppBskyFeedRepost.Record
+        const subjectUri = repostRecord.subject?.uri
+        if (subjectUri) {
+          repostSubjects.push({
+            uri: create.uri,
+            author: authorDid,
+            originalUri: subjectUri,
+          })
+        }
+        continue
       }
 
       if (hasImage) {
-        console.log(`[MATCH] ${create.author} - ${create.uri}`)
+        console.log(`[MATCH] ${authorDid} - ${create.uri}`)
+        // postsToCreate.push(...) など必要であれば追加
+      }
+    }
+
+    // 🔁 Repost対象の元ポストを取得
+    for (let i = 0; i < repostSubjects.length; i += 25) {
+      const batch = repostSubjects.slice(i, i + 25)
+      const uris = batch.map((item) => item.originalUri)
+
+      try {
+        const resp = await this.agent.app.bsky.feed.getPosts({ uris })
+        const postMap = new Map(resp.data.posts.map((p) => [p.uri, p]))
+
+        for (const item of batch) {
+          const post = postMap.get(item.originalUri)
+          const embed = post?.embed
+          if (
+            embed &&
+            embed.$type === 'app.bsky.embed.images' &&
+            Array.isArray(embed.images) &&
+            embed.images.length > 0
+          ) {
+            console.log(`[MATCH] ${item.author} (repost) - ${item.uri}`)
+            // postsToCreate.push(...) など必要であれば追加
+          }
+        }
+      } catch (err) {
+        console.error(`[getPosts] failed:`, err)
       }
     }
 
@@ -101,13 +200,5 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
         .onConflict((oc) => oc.doNothing())
         .execute()
     }
-  }
-
-  async run(delayMs: number = 3000) {
-    await this.agent.login({
-      identifier: process.env.FEEDGEN_PUBLISHER_HANDLE!,
-      password: process.env.FEEDGEN_PUBLISH_APP_PASSWORD!,
-    })
-    super.run(delayMs)
   }
 }
