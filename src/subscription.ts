@@ -79,7 +79,6 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
       }
 
       console.log(`[fetchAllowedDids] Retrieved ${newSet.size} DIDs:`)
-      console.log(Array.from(newSet))
 
       this.allowedDids = newSet
       this.lastFetched = now
