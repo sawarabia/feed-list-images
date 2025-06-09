@@ -1,28 +1,29 @@
-// import SqliteDb from 'better-sqlite3'
-import { Kysely, Migrator, SqliteDialect, PostgresDialect } from 'kysely'
-import { Pool } from 'pg'
-import { DatabaseSchema } from './schema'
-import { migrationProvider } from './migrations'
+import { Kysely, Migration, MigrationProvider } from 'kysely'
 
-export const createDb = (location: string): Database => {
-  // if (location.startsWith('postgres://')) {
-  const pool = new Pool({ connectionString: location })
-  return new Kysely<DatabaseSchema>({
-    dialect: new PostgresDialect({ pool }),
-  })
-  // } else {
-  //   return new Kysely<DatabaseSchema>({
-  //     dialect: new SqliteDialect({
-  //       database: new SqliteDb(location),
-  //     }),
-  //   })
-  // }
+const migrations: Record<string, Migration> = {}
+
+export const migrationProvider: MigrationProvider = {
+  async getMigrations() {
+    return migrations
+  },
 }
 
-export const migrateToLatest = async (db: Database) => {
-  const migrator = new Migrator({ db, provider: migrationProvider })
-  const { error } = await migrator.migrateToLatest()
-  if (error) throw error
+migrations['001'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('post')
+      .addColumn('uri', 'varchar', (col) => col.primaryKey())
+      .addColumn('cid', 'varchar', (col) => col.notNull())
+      .addColumn('indexedAt', 'varchar', (col) => col.notNull())
+      .execute()
+    await db.schema
+      .createTable('sub_state')
+      .addColumn('service', 'varchar', (col) => col.primaryKey())
+      .addColumn('cursor', 'bigint', (col) => col.notNull())
+      .execute()
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('post').execute()
+    await db.schema.dropTable('sub_state').execute()
+  },
 }
-
-export type Database = Kysely<DatabaseSchema>
