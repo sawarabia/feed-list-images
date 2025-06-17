@@ -1,5 +1,11 @@
 import { Database } from './db'
 import { DidResolver } from '@atproto/identity'
+import { AtpAgent } from '@atproto/api'
+
+export type DidEntry = {
+  did: string
+  listUri: string
+}
 
 export type AppContext = {
   db: Database
@@ -16,4 +22,6 @@ export type Config = {
   serviceDid: string
   publisherDid: string
   subscriptionReconnectDelay: number
+  didEntries: DidEntry[]
+  agent: AtpAgent
 }

@@ -12,11 +12,22 @@ import {
   isCommit,
 } from '../lexicon/types/com/atproto/sync/subscribeRepos'
 import { Database } from '../db'
+import { DidEntry } from '../config'
+import { AtpAgent } from '@atproto/api'
 
 export abstract class FirehoseSubscriptionBase {
   public sub: Subscription<RepoEvent>
+  protected didEntries: DidEntry[]
+  protected agent: AtpAgent
 
-  constructor(public db: Database, public service: string) {
+  constructor(
+    public db: Database,
+    public service: string,
+    didEntries: DidEntry[],
+    agent: AtpAgent,
+  ) {
+    this.agent = agent
+    this.didEntries = didEntries
     this.sub = new Subscription({
       service: service,
       method: ids.ComAtprotoSyncSubscribeRepos,

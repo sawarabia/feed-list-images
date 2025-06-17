@@ -2,12 +2,17 @@ import { QueryParams } from '../lexicon/types/app/bsky/feed/getFeedSkeleton'
 import { AppContext } from '../config'
 
 // max 15 chars
-export const shortname = 'whats-alf'
+export const shortname = 'india'
 
 export const handler = async (ctx: AppContext, params: QueryParams) => {
   let builder = ctx.db
     .selectFrom('post')
     .selectAll()
+    .where(
+      'listUri',
+      'like',
+      'at://did:plc:bwzpz5v4meapwnrjjfbhds6m/app.bsky.graph.list/3l7vh6hw7ww2w',
+    )
     .orderBy('indexedAt', 'desc')
     .orderBy('cid', 'desc')
     .limit(params.limit)
