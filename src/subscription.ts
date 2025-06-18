@@ -65,6 +65,7 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
         console.log('failed to get subjectUri')
         continue
       }
+      console.log('subjectUri:' , subjectUri)
 
       try {
         const res = await this.agent.app.bsky.feed.getPostThread({
@@ -82,7 +83,7 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
           const listUri = this.didToListUri.get(create.author) ?? 'unknown'
           console.log(listUri)
           postsToCreate.push({
-            uri: create.uri,
+            uri: subjectUri,
             cid: create.cid,
             indexedAt: new Date().toISOString(),
             listUri,
