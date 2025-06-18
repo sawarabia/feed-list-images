@@ -9,7 +9,7 @@ const makeRouter = (ctx: AppContext) => {
       return res.sendStatus(404)
     }
     res.json({
-      // '@context': ['https://www.w3.org/ns/did/v1'],
+      '@context': ['https://www.w3.org/ns/did/v1'],
       id: ctx.cfg.serviceDid,
       service: [
         {

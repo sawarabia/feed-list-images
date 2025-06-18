@@ -61,7 +61,10 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
     for (const create of ops.reposts.creates) {
       if (!this.allowedDidSet.has(create.author)) continue
       const subjectUri = (create.record as any)?.subject?.uri
-      if (!subjectUri) continue
+      if (!subjectUri) {
+        console.log('failed to get subjectUri')
+        continue
+      }
 
       try {
         const res = await this.agent.app.bsky.feed.getPostThread({
