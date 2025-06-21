@@ -48,10 +48,7 @@ export const handler = async (ctx: AppContext, params: QueryParams) => {
   }
 
   return {
-    encoding: 'application/json',
-    body: {
-      feed,
-      cursor,
-    },
+    cursor,
+    feed,
   }
 }
