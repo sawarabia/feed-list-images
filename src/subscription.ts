@@ -28,36 +28,64 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
 
     const ops = await getOpsByType(evt)
 
-    const postsToDelete = [...ops.posts.deletes, ...ops.reposts.deletes].map(
-      (del) => del.uri,
-    )
+    // 🔻 削除対象
+    const postsToDelete: string[] = []
+    const repostsToDelete: string[] = []
+
+    for (const del of ops.posts.deletes) {
+      postsToDelete.push(del.uri)
+    }
+
+    for (const del of ops.reposts.deletes) {
+      try {
+        const res = await this.agent.app.bsky.feed.getPosts({ uris: [del.uri] })
+        const repost = res.data.posts[0]
+        const subjectUri = (repost as any)?.record?.subject?.uri
+        if (subjectUri) {
+          repostsToDelete.push(subjectUri)
+        } else {
+          console.warn('⚠️ repost削除: subjectUri が取得できません:', del.uri)
+        }
+      } catch (err) {
+        console.warn('⚠️ repost削除: getPosts 失敗:', del.uri, err)
+      }
+    }
+
+    // 🔻 登録対象
     const postsToCreate: {
       uri: string
       cid: string
       indexedAt: string
       listUri: string
+      postType: 'post'
     }[] = []
 
-    // 通常ポスト（画像付きのみ）
+    const repostsToCreate: {
+      uri: string
+      cid: string
+      indexedAt: string
+      listUri: string
+      postType: 'repost'
+    }[] = []
+
     for (const create of ops.posts.creates) {
       if (!this.allowedDidSet.has(create.author)) continue
-      const embed = (create.record as any).embed
+      const embed = (create.record as any)?.embed
       if (
         embed?.$type === 'app.bsky.embed.images' ||
         embed?.$type === 'app.bsky.embed.recordWithMedia'
       ) {
         const listUri = this.didToListUri.get(create.author) ?? 'unknown'
-        console.log(listUri)
         postsToCreate.push({
           uri: create.uri,
           cid: create.cid,
           indexedAt: new Date().toISOString(),
           listUri,
+          postType: 'post',
         })
       }
     }
 
-    // リポスト（元投稿が画像付きか確認）
     for (const create of ops.reposts.creates) {
       if (!this.allowedDidSet.has(create.author)) continue
       const subjectUri = (create.record as any)?.subject?.uri
@@ -65,14 +93,12 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
         console.log('failed to get subjectUri')
         continue
       }
-      console.log('subjectUri:' , subjectUri)
 
       try {
-        const res = await this.agent.app.bsky.feed.getPostThread({
-          uri: subjectUri,
+        const res = await this.agent.app.bsky.feed.getPosts({
+          uris: [subjectUri],
         })
-
-        const post = res.data.thread?.post ?? res.data.thread
+        const post = res.data.posts[0]
         const embed = (post as any)?.record?.embed
 
         const hasImage =
@@ -81,12 +107,12 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
 
         if (hasImage) {
           const listUri = this.didToListUri.get(create.author) ?? 'unknown'
-          console.log(listUri)
-          postsToCreate.push({
+          repostsToCreate.push({
             uri: subjectUri,
             cid: create.cid,
             indexedAt: new Date().toISOString(),
             listUri,
+            postType: 'repost',
           })
         }
       } catch (err) {
@@ -94,17 +120,30 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
       }
     }
 
+    // 🔻 削除実行
     if (postsToDelete.length > 0) {
       await this.db
         .deleteFrom('post')
         .where('uri', 'in', postsToDelete)
+        .where('postType', '=', 'post')
         .execute()
     }
-    if (postsToCreate.length > 0) {
+
+    if (repostsToDelete.length > 0) {
+      await this.db
+        .deleteFrom('post')
+        .where('uri', 'in', repostsToDelete)
+        .where('postType', '=', 'repost')
+        .execute()
+    }
+
+    // 🔻 登録実行
+    const allCreates = [...postsToCreate, ...repostsToCreate]
+    if (allCreates.length > 0) {
       await this.db
         .insertInto('post')
-        .values(postsToCreate)
-        .onConflict((oc) => oc.doNothing())
+        .values(allCreates)
+        .onConflict((oc) => oc.columns(['uri', 'postType']).doNothing())
         .execute()
     }
   }

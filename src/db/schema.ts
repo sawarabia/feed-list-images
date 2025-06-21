@@ -8,6 +8,7 @@ export type Post = {
   cid: string
   indexedAt: string
   listUri: string
+  postType: string
 }
 
 export type SubState = {
