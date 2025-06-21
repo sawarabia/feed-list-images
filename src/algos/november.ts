@@ -13,7 +13,7 @@ export const handler = async (ctx: AppContext, params: QueryParams) => {
   const subquery = ctx.db
     .selectFrom('post')
     .select([
-      'uri',
+      'postUri',
       'cid',
       'indexedAt',
       'listUri',
@@ -38,7 +38,7 @@ export const handler = async (ctx: AppContext, params: QueryParams) => {
   const res = await builder.execute()
 
   const feed = res.map((row) => ({
-    post: row.uri,
+    post: row.postUri,
   }))
 
   let cursor: string | undefined

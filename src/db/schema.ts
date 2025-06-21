@@ -4,11 +4,12 @@ export type DatabaseSchema = {
 }
 
 export type Post = {
-  uri: string
+  postUri: string
   cid: string
   indexedAt: string
   listUri: string
   postType: string
+  repostUri: string | null
 }
 
 export type SubState = {

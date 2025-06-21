@@ -37,33 +37,26 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
     }
 
     for (const del of ops.reposts.deletes) {
-      try {
-        const res = await this.agent.app.bsky.feed.getPosts({ uris: [del.uri] })
-        const repost = res.data.posts[0]
-        const subjectUri = (repost as any)?.record?.subject?.uri
-        if (subjectUri) {
-          repostsToDelete.push(subjectUri)
-        }
-      } catch (err) {
-        console.warn('⚠️ repost削除: getPosts 失敗:', del.uri, err)
-      }
+      repostsToDelete.push(del.uri)
     }
 
     // 🔻 登録対象
     const postsToCreate: {
-      uri: string
+      postUri: string
       cid: string
       indexedAt: string
       listUri: string
       postType: 'post'
+      repostUri: null
     }[] = []
 
     const repostsToCreate: {
-      uri: string
+      postUri: string
       cid: string
       indexedAt: string
       listUri: string
       postType: 'repost'
+      repostUri: string
     }[] = []
 
     for (const create of ops.posts.creates) {
@@ -75,11 +68,12 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
       ) {
         const listUri = this.didToListUri.get(create.author) ?? 'unknown'
         postsToCreate.push({
-          uri: create.uri,
+          postUri: create.uri,
           cid: create.cid,
           indexedAt: new Date().toISOString(),
           listUri,
           postType: 'post',
+          repostUri: null
         })
       }
     }
@@ -106,11 +100,12 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
         if (hasImage) {
           const listUri = this.didToListUri.get(create.author) ?? 'unknown'
           repostsToCreate.push({
-            uri: subjectUri,
+            postUri: subjectUri,
             cid: create.cid,
             indexedAt: new Date().toISOString(),
             listUri,
             postType: 'repost',
+            repostUri: create.uri,
           })
         }
       } catch (err) {
@@ -122,7 +117,7 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
     if (postsToDelete.length > 0) {
       await this.db
         .deleteFrom('post')
-        .where('uri', 'in', postsToDelete)
+        .where('postUri', 'in', postsToDelete)
         .where('postType', '=', 'post')
         .execute()
     }
@@ -130,18 +125,25 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
     if (repostsToDelete.length > 0) {
       await this.db
         .deleteFrom('post')
-        .where('uri', 'in', repostsToDelete)
+        .where('repostUri', 'in', repostsToDelete)
         .where('postType', '=', 'repost')
         .execute()
     }
 
     // 🔻 登録実行
-    const allCreates = [...postsToCreate, ...repostsToCreate]
-    if (allCreates.length > 0) {
+    if (postsToCreate.length > 0) {
       await this.db
         .insertInto('post')
-        .values(allCreates)
-        .onConflict((oc) => oc.columns(['uri', 'postType']).doNothing())
+        .values(postsToCreate)
+        .onConflict((oc) => oc.columns(['postUri', 'postType']).doNothing())
+        .execute()
+    }
+
+    if (repostsToCreate.length > 0) {
+      await this.db
+        .insertInto('post')
+        .values(repostsToCreate)
+        .onConflict((oc) => oc.columns(['repostUri', 'postType']).doNothing())
         .execute()
     }
   }
