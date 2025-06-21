@@ -43,8 +43,6 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
         const subjectUri = (repost as any)?.record?.subject?.uri
         if (subjectUri) {
           repostsToDelete.push(subjectUri)
-        } else {
-          console.warn('⚠️ repost削除: subjectUri が取得できません:', del.uri)
         }
       } catch (err) {
         console.warn('⚠️ repost削除: getPosts 失敗:', del.uri, err)
