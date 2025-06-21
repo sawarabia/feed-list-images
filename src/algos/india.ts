@@ -32,7 +32,7 @@ export const handler = async (ctx: AppContext, params: QueryParams) => {
 
   if (params.cursor) {
     const timeStr = new Date(parseInt(params.cursor, 10)).toISOString()
-    builder = builder.where('indexedAt', '<', timeStr)
+    builder = builder.where('t.indexedAt', '<', timeStr)
   }
 
   const res = await builder.execute()
