@@ -9,38 +9,45 @@ export const handler = async (ctx: AppContext, params: QueryParams) => {
   const listUri =
     'at://did:plc:bwzpz5v4meapwnrjjfbhds6m/app.bsky.graph.list/3l7vh6hw7ww2w'
 
-  // サブクエリ: uri ごとに indexedAt が最も古い（ROW_NUMBER = 1）のみを抽出
-  const subquery = ctx.db
+  const postQuery = ctx.db
     .selectFrom('post')
     .select([
       'postUri',
       'cid',
       'indexedAt',
-      'listUri',
-      sql`ROW_NUMBER() OVER (PARTITION BY uri ORDER BY indexedAt ASC)`.as('rn'),
     ])
-    .where('listUri', 'like', listUri)
+    .where('listUri', '=', listUri)
 
-  // メインクエリ: 最古の投稿だけを対象にして、表示順は新しい順に
-  let builder = ctx.db
-    .selectFrom(subquery.as('t'))
-    .selectAll()
-    .where('rn', '=', 1)
-    .orderBy('indexedAt', 'desc')
-    .orderBy('cid', 'desc')
-    .limit(params.limit)
+  const repostQuery = ctx.db
+    .selectFrom('repost')
+    .select([
+      'postUri',
+      'cid',
+      'indexedAt',
+    ])
+    .where('listUri', '=', listUri)
+
+  let unifiedQuery = ctx.db
+  .selectFrom(
+    postQuery
+      .unionAll(repostQuery).as('u')
+  )
+  .selectAll()
+  .orderBy('indexedAt', 'desc')
+  .orderBy('cid', 'desc')
+  .limit(params.limit)
 
   if (params.cursor) {
     const timeStr = new Date(parseInt(params.cursor, 10)).toISOString()
-    builder = builder.where('t.indexedAt', '<', timeStr)
+    unifiedQuery = unifiedQuery.where('indexedAt', '<', timeStr)
   }
-
-  const res = await builder.execute()
+console.log('unifiedQuery:', unifiedQuery)
+  const res = await unifiedQuery.execute()
 
   const feed = res.map((row) => ({
     post: row.postUri,
   }))
-
+  console.log('feed:', feed)
   let cursor: string | undefined
   const last = res.at(-1)
   if (last) {

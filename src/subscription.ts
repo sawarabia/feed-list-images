@@ -46,8 +46,6 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
       cid: string
       indexedAt: string
       listUri: string
-      postType: 'post'
-      repostUri: null
     }[] = []
 
     const repostsToCreate: {
@@ -55,7 +53,6 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
       cid: string
       indexedAt: string
       listUri: string
-      postType: 'repost'
       repostUri: string
     }[] = []
 
@@ -72,8 +69,6 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
           cid: create.cid,
           indexedAt: new Date().toISOString(),
           listUri,
-          postType: 'post',
-          repostUri: null
         })
         console.log('captured a post', create.uri, 'from', listUri)
       }
@@ -105,7 +100,6 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
             cid: create.cid,
             indexedAt: new Date().toISOString(),
             listUri,
-            postType: 'repost',
             repostUri: create.uri,
           })
           console.log('captured a repost', subjectUri, 'from', listUri)
@@ -120,15 +114,13 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
       await this.db
         .deleteFrom('post')
         .where('postUri', 'in', postsToDelete)
-        .where('postType', '=', 'post')
         .execute()
     }
 
     if (repostsToDelete.length > 0) {
       await this.db
-        .deleteFrom('post')
+        .deleteFrom('repost')
         .where('repostUri', 'in', repostsToDelete)
-        .where('postType', '=', 'repost')
         .execute()
     }
 
@@ -137,15 +129,15 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
       await this.db
         .insertInto('post')
         .values(postsToCreate)
-        .onConflict((oc) => oc.columns(['postUri', 'postType']).doNothing())
+        .onConflict((oc) => oc.doNothing())
         .execute()
     }
 
     if (repostsToCreate.length > 0) {
       await this.db
-        .insertInto('post')
+        .insertInto('repost')
         .values(repostsToCreate)
-        .onConflict((oc) => oc.columns(['repostUri', 'postType']).doNothing())
+        .onConflict((oc) => oc.doNothing())
         .execute()
     }
   }

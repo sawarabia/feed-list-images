@@ -12,14 +12,19 @@ migrations['001'] = {
   async up(db: Kysely<unknown>) {
     await db.schema
       .createTable('post')
-      .addColumn('postUri', 'varchar', (col) => col.notNull())
+      .addColumn('postUri', 'varchar', (col) => col.primaryKey())
       .addColumn('cid', 'varchar', (col) => col.notNull())
       .addColumn('indexedAt', 'varchar', (col) => col.notNull())
       .addColumn('listUri', 'varchar', (col) => col.notNull())
       .addColumn('postType', 'varchar', (col) => col.notNull())
-      .addColumn('repostUri', 'varchar')
-      .addUniqueConstraint('post_unique', ['postUri', 'postType'])
-      .addUniqueConstraint('repost_unique', ['repostUri', 'postType'])
+      .execute()
+    await db.schema
+      .createTable('repost')
+      .addColumn('postUri', 'varchar', (col) => col.primaryKey())
+      .addColumn('cid', 'varchar', (col) => col.notNull())
+      .addColumn('indexedAt', 'varchar', (col) => col.notNull())
+      .addColumn('listUri', 'varchar', (col) => col.notNull())
+      .addColumn('repostUri', 'varchar', (col) => col.notNull())
       .execute()
     await db.schema
       .createTable('sub_state')
@@ -29,6 +34,7 @@ migrations['001'] = {
   },
   async down(db: Kysely<unknown>) {
     await db.schema.dropTable('post').execute()
+    await db.schema.dropTable('repost').execute()
     await db.schema.dropTable('sub_state').execute()
   },
 }
