@@ -16,7 +16,6 @@ migrations['001'] = {
       .addColumn('cid', 'varchar', (col) => col.notNull())
       .addColumn('indexedAt', 'varchar', (col) => col.notNull())
       .addColumn('listUri', 'varchar', (col) => col.notNull())
-      .addColumn('postType', 'varchar', (col) => col.notNull())
       .execute()
     await db.schema
       .createTable('repost')
