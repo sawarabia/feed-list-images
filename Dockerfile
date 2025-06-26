@@ -33,7 +33,7 @@ COPY . .
 # RUN yarn run build
 
 # Remove development dependencies
-RUN yarn install --production=true
+# RUN yarn install --production=true
 
 
 # Final stage for app image
