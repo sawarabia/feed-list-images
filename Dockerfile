@@ -30,7 +30,7 @@ RUN yarn install --frozen-lockfile --production=false
 COPY . .
 
 # Build application
-RUN yarn run build
+# RUN yarn run build
 
 # Remove development dependencies
 RUN yarn install --production=true
@@ -49,4 +49,4 @@ VOLUME /data
 # Start the server by default, this can be overwritten at runtime
 EXPOSE 3000
 ENV DATABASE_URL="file:///data/sqlite.db"
-CMD [ "yarn", "run", "start" ]
+CMD [ "yarn", "start" ]
