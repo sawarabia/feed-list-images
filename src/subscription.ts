@@ -75,7 +75,7 @@ export class ListMembersSubscription {
     if (this.lastFetchDate === today && this.actors_arr.length > 0) return
 
     dotenv.config()
-    const identifier = process.env.FEEDGEN_PUBLISHER_IDENTIFIER || ''
+    const identifier = process.env.FEEDGEN_PUBLISHER_DID || ''
     const password = process.env.FEEDGEN_PUBLISH_APP_PASSWORD || ''
 
     if (!identifier || !password) {
