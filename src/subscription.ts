@@ -76,7 +76,7 @@ export class ListMembersSubscription {
 
     dotenv.config()
     const identifier = process.env.FEEDGEN_PUBLISHER_IDENTIFIER || ''
-    const password = process.env.FEEDGEN_APP_PASSWORD || ''
+    const password = process.env.FEEDGEN_PUBLISH_APP_PASSWORD || ''
 
     if (!identifier || !password) {
       throw new Error(
