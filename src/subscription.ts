@@ -70,7 +70,6 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
           indexedAt: new Date().toISOString(),
           listUri,
         })
-        console.log('captured a post', create.uri, 'from', listUri)
       }
     }
 
@@ -102,7 +101,6 @@ export class FirehoseSubscription extends FirehoseSubscriptionBase {
             listUri,
             repostUri: create.uri,
           })
-          console.log('captured a repost', subjectUri, 'from', listUri)
         }
       } catch (err) {
         console.warn('⚠️ リポスト元の投稿取得に失敗:', subjectUri, err)
