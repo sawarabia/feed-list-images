@@ -137,7 +137,7 @@ export class ListMembersSubscription {
       const params_feed: QueryParamsFeeds = {
         actor: actor.did,
         limit: 25,
-        filter: 'posts_with_media', // ToDo リプライを除く処理を追加
+        filter: 'posts_with_replies',
       }
 
       try {

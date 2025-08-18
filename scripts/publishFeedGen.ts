@@ -2,16 +2,13 @@ import dotenv from 'dotenv'
 import { AtpAgent, BlobRef, AppBskyFeedDefs } from '@atproto/api'
 import fs from 'fs/promises'
 import { ids } from '../src/lexicon/lexicons'
+import inquirer from 'inquirer'
 import { createHash } from 'crypto'
 
 const run = async () => {
   dotenv.config()
 
   // 必須の環境変数チェック
-  if (!process.env.FEEDGEN_SERVICE_DID && !process.env.FEEDGEN_HOSTNAME) {
-    throw new Error('Please provide a hostname in the .env file')
-  }
-
   if (
     !process.env.FEEDGEN_PUBLISHER_HANDLE ||
     !process.env.FEEDGEN_PUBLISH_APP_PASSWORD
@@ -28,9 +25,7 @@ const run = async () => {
   const service = undefined
   const videoOnly = false
 
-  const feedGenDid =
-    process.env.FEEDGEN_SERVICE_DID ?? `did:web:${process.env.FEEDGEN_HOSTNAME}`
-
+  const feedGenDid = `did:web:${process.env.FEEDGEN_PUBLUSH_HOSTNAME}`
   // ログイン
   const agent = new AtpAgent({
     service: service ?? 'https://bsky.social',
@@ -45,37 +40,40 @@ const run = async () => {
   }
 
   for (const listUri of listUris) {
+    // リスト情報の取得
+    let displayName: string | undefined
     try {
-      // リスト情報の取得
       const res = await agent.app.bsky.graph.getList({ list: listUri })
-      const displayName: string = res.data.list.name
+      displayName = res.data.list.name
+    } catch (err) {
+      console.error(`リスト取得エラー:`, err)
+      continue
+    }
 
-      // アバター画像のアップロード（任意）
-      let avatarRef: BlobRef | undefined
-      if (avatar !== undefined) {
-        let encoding: string
-        if (avatar.endsWith('png')) {
-          encoding = 'image/png'
-        } else if (avatar.endsWith('jpg') || avatar.endsWith('jpeg')) {
-          encoding = 'image/jpeg'
-        } else {
-          throw new Error('expected png or jpeg')
-        }
-
-        const img = await fs.readFile(avatar)
-        const blobRes = await agent.api.com.atproto.repo.uploadBlob(img, {
-          encoding,
-        })
-        avatarRef = blobRes.data.blob
+    // アバター画像のアップロード（任意）
+    let avatarRef: BlobRef | undefined
+    if (avatar !== undefined) {
+      let encoding: string
+      if (avatar.endsWith('png')) {
+        encoding = 'image/png'
+      } else if (avatar.endsWith('jpg') || avatar.endsWith('jpeg')) {
+        encoding = 'image/jpeg'
+      } else {
+        throw new Error('expected png or jpeg')
       }
 
-      // rkey をハッシュから生成（listUri → 16文字のSHA256ハッシュ）
-      const rkey = createHash('sha256')
-        .update(listUri)
-        .digest('hex')
-        .slice(0, 16)
+      const img = await fs.readFile(avatar)
+      const blobRes = await agent.api.com.atproto.repo.uploadBlob(img, {
+        encoding,
+      })
+      avatarRef = blobRes.data.blob
+    }
 
-      // フィードジェネレーター登録
+    // rkey をハッシュから生成（listUri → 16文字のSHA256ハッシュ）
+    const rkey = createHash('sha256').update(listUri).digest('hex').slice(0, 16)
+
+    // フィードジェネレーター登録
+    try {
       await agent.com.atproto.repo.putRecord({
         repo: agent.session?.did ?? '',
         collection: ids.AppBskyFeedGenerator,
@@ -94,7 +92,7 @@ const run = async () => {
 
       console.log(`登録完了: ${displayName}`)
     } catch (err) {
-      console.error(`エラー（${listUri}）:`, err)
+      console.error(`登録エラー: ${feedGenDid}`, err)
     }
   }
 
