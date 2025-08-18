@@ -7,6 +7,7 @@ import { FirehoseSubscriptionBase, getOpsByType } from './util/subscription'
 import { Database } from './db'
 import dotenv from 'dotenv'
 import { QueryParams as QueryParamsFeeds } from './lexicon/types/app/bsky/feed/getAuthorFeed'
+import { createHash } from 'crypto'
 
 // このクラスは使わない
 // export class FirehoseSubscription extends FirehoseSubscriptionBase {
@@ -89,16 +90,17 @@ export class ListMembersSubscription {
     const did = this.agent.session?.did
     if (!did) throw new Error('ログインに失敗しました')
 
-    const res = await this.safeApiCall(() =>
-      this.agent.app.bsky.graph.getLists({ actor: did }),
-    )
-
-    const lists = res.data.lists
-    if (!lists || lists.length === 0) {
-      this.actors_arr = []
-      return
+    const lists = process.env.FEEDGEN_LIST_URIS?.split(',')
+    if (!lists) {
+      throw new Error('リストが設定されていません')
     }
-
+    lists.map((uri) => {
+      const shortname = createHash('sha256')
+        .update(uri)
+        .digest('hex')
+        .slice(0, 16)
+      console.log(shortname)
+    })
     const newActors: { did: string; listUri: string }[] = []
 
     for (const list of lists) {
@@ -107,14 +109,14 @@ export class ListMembersSubscription {
       do {
         const membersRes = await this.safeApiCall(() =>
           this.agent.app.bsky.graph.getList({
-            list: list.uri,
+            list: list,
             cursor,
           }),
         )
 
         const entries = membersRes.data.items.map((item) => ({
           did: item.subject.did,
-          listUri: list.uri,
+          listUri: list,
         }))
         newActors.push(...entries)
 
@@ -124,6 +126,7 @@ export class ListMembersSubscription {
 
     this.actors_arr = newActors
     this.lastFetchDate = today
+    console.log(this.lastFetchDate)
   }
 
   // 投稿取得（10分ごと定期実行）
@@ -133,7 +136,7 @@ export class ListMembersSubscription {
     for (let actor of this.actors_arr) {
       const params_feed: QueryParamsFeeds = {
         actor: actor.did,
-        limit: 50,
+        limit: 25,
         filter: 'posts_with_media', // ToDo リプライを除く処理を追加
       }
 
@@ -156,10 +159,11 @@ export class ListMembersSubscription {
             .execute()
         }
       } catch (e) {
-        console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
         // 10分後に取り直せる可能性が高いのでリトライはしない
+        console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
       }
     }
+    console.log('fetched posts')
   }
 
   // APIエラー時のリトライ処理
@@ -180,7 +184,7 @@ export class ListMembersSubscription {
     try {
       await this.reload()
     } catch (e) {
-      console.error(`[ERROR] reload() でエラー: ${e}`)
+      console.error(`[ERROR] 投稿取得エラー: ${e}`)
     }
   }, 10 * 60 * 1000) // 10分ごと
 }
