@@ -135,7 +135,7 @@ export class ListMembersSubscription {
     for (let actor of this.actors_arr) {
       const params_feed: QueryParamsFeeds = {
         actor: actor.did,
-        limit: 100,
+        limit: 50,
         filter: 'posts_with_replies',
       }
 
@@ -156,20 +156,19 @@ export class ListMembersSubscription {
           }
 
           const embed = post.post.embed
-
           let hasImage = false
-
           if (embed?.images || embed?.$type === 'app.bsky.embed.images#views') {
             hasImage = true
           }
-
           if (!hasImage) continue
 
+          const indexedAt =
+            (post.reason?.indexedAt as string) ?? post.post.indexedAt
           const postsToCreate = {
             uri: uri,
             cid: post.post.cid,
             listUri: actor.listUri,
-            indexedAt: post.post.indexedAt,
+            indexedAt: indexedAt,
           }
 
           await this.db
