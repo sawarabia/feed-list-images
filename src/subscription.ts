@@ -161,7 +161,6 @@ export class ListMembersSubscription {
 
           if (embed?.images || embed?.$type === 'app.bsky.embed.images#views') {
             hasImage = true
-            console.log('image detected')
           }
 
           if (!hasImage) continue
