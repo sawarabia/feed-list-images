@@ -132,12 +132,11 @@ export class ListMembersSubscription {
   // 投稿取得（10分ごと定期実行）
   async reload() {
     await this.updateActorsIfNeeded()
-
     for (let actor of this.actors_arr) {
       const params_feed: QueryParamsFeeds = {
         actor: actor.did,
-        limit: 50,
-        filter: 'posts_no_replies',
+        limit: 100,
+        filter: 'posts_with_replies',
       }
 
       try {
@@ -147,50 +146,24 @@ export class ListMembersSubscription {
         for (const post of postsArray) {
           const uri = post.post.uri
 
-          const exists = await this.db
-            .selectFrom('post')
-            .select(['uri'])
-            .where('uri', '=', uri)
-            .executeTakeFirst()
-          if (exists) {
-            continue
-          }
+          // const exists = await this.db
+          //   .selectFrom('post')
+          //   .select(['uri'])
+          //   .where('uri', '=', uri)
+          //   .executeTakeFirst()
+          // if (exists) {
+          //   continue
+          // }
 
-          const recordType = post.post.$type
           const embed = post.post.embed
 
           let hasImage = false
 
-          if (
-            recordType === 'app.bsky.feed.post' &&
-            (embed?.$type === 'app.bsky.embed.images' ||
-              embed?.$type === 'app.bsky.embed.recordWithMedia')
-          ) {
+          if (embed?.images || embed?.$type === 'app.bsky.embed.images#views') {
             hasImage = true
+            console.log('image detected')
           }
 
-          if (recordType === 'app.bsky.feed.repost') {
-            const subjectUri = (post.record as any)?.subject?.uri
-            if (!subjectUri) {
-              console.log(`failed to get subjectUri uri: ${uri}`)
-              continue
-            }
-            try {
-              const res = await this.agent.app.bsky.feed.getPosts({
-                uris: [subjectUri],
-              })
-              const post = res.data.posts[0]
-              const embed = (post as any)?.record?.embed
-              if (
-                embed?.$type === 'app.bsky.embed.images' ||
-                embed?.$type === 'app.bsky.embed.recordWithMedia'
-              ) {
-                hasImage = true
-              }
-            } catch (err) {
-              console.warn('⚠️ リポスト元の投稿取得に失敗:', uri, err)
-            }
-          }
           if (!hasImage) continue
 
           const postsToCreate = {
