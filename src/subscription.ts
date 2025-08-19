@@ -146,14 +146,14 @@ export class ListMembersSubscription {
         for (const post of postsArray) {
           const uri = post.post.uri
 
-          // const exists = await this.db
-          //   .selectFrom('post')
-          //   .select(['uri'])
-          //   .where('uri', '=', uri)
-          //   .executeTakeFirst()
-          // if (exists) {
-          //   continue
-          // }
+          const exists = await this.db
+            .selectFrom('post')
+            .select(['uri'])
+            .where('uri', '=', uri)
+            .executeTakeFirst()
+          if (exists) {
+            continue
+          }
 
           const embed = post.post.embed
 
