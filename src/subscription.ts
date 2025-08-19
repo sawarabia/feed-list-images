@@ -136,17 +136,65 @@ export class ListMembersSubscription {
     for (let actor of this.actors_arr) {
       const params_feed: QueryParamsFeeds = {
         actor: actor.did,
-        limit: 25,
-        filter: 'posts_with_replies',
+        limit: 50,
+        filter: 'posts_no_replies',
       }
 
       try {
         const { data: data_feed } = await this.agent.getAuthorFeed(params_feed)
         const postsArray = data_feed.feed
 
-        for (let post of postsArray) {
+        for (const post of postsArray) {
+          const uri = post.post.uri
+
+          const exists = await this.db
+            .selectFrom('post')
+            .select(['uri'])
+            .where('uri', '=', uri)
+            .executeTakeFirst()
+          if (exists) {
+            continue
+          }
+
+          const recordType = post.post.$type
+          const embed = post.post.embed
+
+          let hasImage = false
+
+          if (
+            recordType === 'app.bsky.feed.post' &&
+            (embed?.$type === 'app.bsky.embed.images' ||
+              embed?.$type === 'app.bsky.embed.recordWithMedia')
+          ) {
+            hasImage = true
+          }
+
+          if (recordType === 'app.bsky.feed.repost') {
+            const subjectUri = (post.record as any)?.subject?.uri
+            if (!subjectUri) {
+              console.log(`failed to get subjectUri uri: ${uri}`)
+              continue
+            }
+            try {
+              const res = await this.agent.app.bsky.feed.getPosts({
+                uris: [subjectUri],
+              })
+              const post = res.data.posts[0]
+              const embed = (post as any)?.record?.embed
+              if (
+                embed?.$type === 'app.bsky.embed.images' ||
+                embed?.$type === 'app.bsky.embed.recordWithMedia'
+              ) {
+                hasImage = true
+              }
+            } catch (err) {
+              console.warn('⚠️ リポスト元の投稿取得に失敗:', uri, err)
+            }
+          }
+          if (!hasImage) continue
+
           const postsToCreate = {
-            uri: post.post.uri,
+            uri: uri,
             cid: post.post.cid,
             listUri: actor.listUri,
             indexedAt: post.post.indexedAt,
