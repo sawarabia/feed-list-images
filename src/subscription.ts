@@ -132,12 +132,19 @@ export class ListMembersSubscription {
   // 投稿取得（10分ごと定期実行）
   async reload() {
     await this.updateActorsIfNeeded()
+
+    let totalInserted = 0
+    let totalSkipped = 0
+
     for (let actor of this.actors_arr) {
       const params_feed: QueryParamsFeeds = {
         actor: actor.did,
         limit: 50,
         filter: 'posts_with_replies',
       }
+
+      let insertedCount = 0
+      let skippedCount = 0
 
       try {
         const { data: data_feed } = await this.agent.getAuthorFeed(params_feed)
@@ -146,15 +153,19 @@ export class ListMembersSubscription {
         for (const post of postsArray) {
           const uri = post.post.uri
 
+          // すでに存在していたらスキップ
           const exists = await this.db
             .selectFrom('post')
             .select(['uri'])
             .where('uri', '=', uri)
             .executeTakeFirst()
+
           if (exists) {
+            skippedCount++
             continue
           }
 
+          // 画像があるか確認
           const embed = post.post.embed
           let hasImage = false
           if (embed?.images || embed?.$type === 'app.bsky.embed.images#views') {
@@ -162,8 +173,10 @@ export class ListMembersSubscription {
           }
           if (!hasImage) continue
 
+          // indexedAt: リポスト日時より元投稿日時を優先
           const indexedAt =
             (post.reason?.indexedAt as string) ?? post.post.indexedAt
+
           const postsToCreate = {
             uri: uri,
             cid: post.post.cid,
@@ -176,13 +189,24 @@ export class ListMembersSubscription {
             .values(postsToCreate)
             .onConflict((oc) => oc.doNothing())
             .execute()
+
+          insertedCount++
         }
+
+        console.log(
+          `[${actor.did}] 登録: ${insertedCount}件 / スキップ: ${skippedCount}件`,
+        )
+
+        totalInserted += insertedCount
+        totalSkipped += skippedCount
       } catch (e) {
-        // 10分後に取り直せる可能性が高いのでリトライはしない
         console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
       }
     }
-    console.log('fetched posts')
+
+    console.log(
+      `✅ 合計 登録: ${totalInserted}件 / スキップ: ${totalSkipped}件`,
+    )
   }
 
   // APIエラー時のリトライ処理
