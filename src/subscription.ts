@@ -135,16 +135,20 @@ export class ListMembersSubscription {
 
     let totalInserted = 0
     let totalSkipped = 0
+    let totalNoImage = 0
+    const minTimestamps: string[] = []
 
     for (let actor of this.actors_arr) {
       const params_feed: QueryParamsFeeds = {
         actor: actor.did,
-        limit: 50,
+        limit: 10,
         filter: 'posts_with_replies',
       }
 
       let insertedCount = 0
       let skippedCount = 0
+      let noimageCount = 0
+      let oldestIndexedAt: string | null = null
 
       try {
         const { data: data_feed } = await this.agent.getAuthorFeed(params_feed)
@@ -158,24 +162,33 @@ export class ListMembersSubscription {
             .selectFrom('post')
             .select(['uri'])
             .where('uri', '=', uri)
+            .where('listUri', '=', actor.listUri)
             .executeTakeFirst()
 
           if (exists) {
             skippedCount++
             continue
           }
-
           // 画像があるか確認
           const embed = post.post.embed
           let hasImage = false
           if (embed?.images || embed?.$type === 'app.bsky.embed.images#views') {
             hasImage = true
           }
-          if (!hasImage) continue
 
-          // indexedAt: リポスト日時より元投稿日時を優先
+          // indexedAt: リポスト日時を元投稿日時より優先
           const indexedAt =
             (post.reason?.indexedAt as string) ?? post.post.indexedAt
+          if (
+            !oldestIndexedAt ||
+            new Date(indexedAt) < new Date(oldestIndexedAt)
+          ) {
+            oldestIndexedAt = indexedAt
+          }
+          if (!hasImage) {
+            noimageCount++
+            continue
+          }
 
           const postsToCreate = {
             uri: uri,
@@ -184,28 +197,36 @@ export class ListMembersSubscription {
             indexedAt: indexedAt,
           }
 
-          await this.db
-            .insertInto('post')
-            .values(postsToCreate)
-            .onConflict((oc) => oc.doNothing())
-            .execute()
-
-          insertedCount++
+          try {
+            await this.db
+              .insertInto('post')
+              .values(postsToCreate)
+              .onConflict((oc) => oc.doNothing())
+              .execute()
+            insertedCount++
+          } catch (err) {
+            console.error(`[ERROR] DB挿入失敗: ${postsToCreate.uri}`, err)
+          }
         }
-
-        console.log(
-          `[${actor.did}] 登録: ${insertedCount}件 / スキップ: ${skippedCount}件`,
-        )
-
+        // 最古のタイムスタンプを保存
+        if (oldestIndexedAt) {
+          minTimestamps.push(oldestIndexedAt)
+        }
         totalInserted += insertedCount
         totalSkipped += skippedCount
+        totalNoImage += noimageCount
       } catch (e) {
         console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
       }
     }
-
+    if (minTimestamps.length > 0) {
+      const latestOfMin = minTimestamps.reduce((a, b) =>
+        new Date(a) > new Date(b) ? a : b,
+      )
+      console.log(`🕒 漏れなく取れた時間 ${latestOfMin}`)
+    }
     console.log(
-      `✅ 合計 登録: ${totalInserted}件 / スキップ: ${totalSkipped}件`,
+      `合計 追加: ${totalInserted}件 / 重複: ${totalSkipped}件 / 画像なし: ${totalNoImage}件`,
     )
   }
 
@@ -229,5 +250,5 @@ export class ListMembersSubscription {
     } catch (e) {
       console.error(`[ERROR] 投稿取得エラー: ${e}`)
     }
-  }, 10 * 60 * 1000) // 10分ごと
+  }, 10 * 60 * 1000) // フェッチ間隔（ミリ秒）
 }
