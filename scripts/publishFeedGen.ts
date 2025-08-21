@@ -2,13 +2,11 @@ import dotenv from 'dotenv'
 import { AtpAgent, BlobRef, AppBskyFeedDefs } from '@atproto/api'
 import fs from 'fs/promises'
 import { ids } from '../src/lexicon/lexicons'
-import inquirer from 'inquirer'
 import { createHash } from 'crypto'
 
 const run = async () => {
   dotenv.config()
 
-  // 必須の環境変数チェック
   if (
     !process.env.FEEDGEN_PUBLISHER_HANDLE ||
     !process.env.FEEDGEN_PUBLISH_APP_PASSWORD
@@ -19,13 +17,14 @@ const run = async () => {
   const handle = process.env.FEEDGEN_PUBLISHER_HANDLE
   const password = process.env.FEEDGEN_PUBLISH_APP_PASSWORD
 
-  // 任意項目
+  // 使わない項目はundefinedのまま
   const description = undefined
   const avatar: any = undefined // アバター画像のパス（任意）
   const service = undefined
   const videoOnly = false
 
   const feedGenDid = `did:web:${process.env.FEEDGEN_PUBLUSH_HOSTNAME}`
+
   // ログイン
   const agent = new AtpAgent({
     service: service ?? 'https://bsky.social',
@@ -40,7 +39,7 @@ const run = async () => {
   }
 
   for (const listUri of listUris) {
-    // リスト情報の取得
+    // リスト表示名を取得してフィード表示名とする
     let displayName: string | undefined
     try {
       const res = await agent.app.bsky.graph.getList({ list: listUri })
@@ -50,7 +49,7 @@ const run = async () => {
       continue
     }
 
-    // アバター画像のアップロード（任意）
+    // アバター画像のアップロード（使わない）
     let avatarRef: BlobRef | undefined
     if (avatar !== undefined) {
       let encoding: string
@@ -69,15 +68,18 @@ const run = async () => {
       avatarRef = blobRes.data.blob
     }
 
-    // rkey をハッシュから生成（listUri → 16文字のSHA256ハッシュ）
-    const rkey = createHash('sha256').update(listUri).digest('hex').slice(0, 16)
+    // shortnameはlistUriをハッシュ化したもの
+    const shortname = createHash('sha256')
+      .update(listUri)
+      .digest('hex')
+      .slice(0, 16)
 
-    // フィードジェネレーター登録
+    // Feed登録
     try {
       await agent.com.atproto.repo.putRecord({
         repo: agent.session?.did ?? '',
         collection: ids.AppBskyFeedGenerator,
-        rkey: rkey,
+        rkey: shortname,
         record: {
           did: feedGenDid,
           displayName: displayName,
