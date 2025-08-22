@@ -125,10 +125,16 @@ export class ListMembersSubscription {
   // 投稿取得（定期実行）
   async reload() {
     await this.updateActorsIfNeeded()
+    const limits = [3, 10, 30, 100]
+    const fetchCountStats: Record<number, number> = {
+      3: 0,
+      10: 0,
+      30: 0,
+      100: 0,
+    }
 
     for (const actor of this.actors_arr) {
       let oldest: string | null = null
-      const limits = [3, 10, 30, 100]
       let postsArray: FeedViewPost[] = []
 
       for (let limit of limits) {
@@ -155,12 +161,14 @@ export class ListMembersSubscription {
             !this.lastFetchDate ||
             new Date(oldest) <= new Date(this.lastFetchDate)
           ) {
+            fetchCountStats[limit]++
             break
           } else if (limit === 100) {
             console.log(
               '上限まで投稿を取得しましたが、未取得の投稿が存在する可能性があります',
             )
           }
+          fetchCountStats[limit]++
         } catch (e) {
           console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
         }
@@ -213,6 +221,11 @@ export class ListMembersSubscription {
     // 今回のフェッチ時刻を記録
     this.lastFetchDate = new Date().toISOString()
     console.log(`[INFO] フェッチ完了: ${this.lastFetchDate} (UTC)`)
+    // 統計出力
+    console.log('[INFO] 投稿取得に使われた件数の統計:')
+    for (const limit of limits) {
+      console.log(`  - ${limit}件で取得完了: ${fetchCountStats[limit]}人`)
+    }
   }
 
   // APIエラー時のリトライ処理
