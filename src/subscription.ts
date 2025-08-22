@@ -6,10 +6,9 @@ import {
 import { FirehoseSubscriptionBase, getOpsByType } from './util/subscription'
 import { Database } from './db'
 import dotenv from 'dotenv'
-import { QueryParams as QueryParamsFeeds } from './lexicon/types/app/bsky/feed/getAuthorFeed'
-import { createHash } from 'crypto'
+import { FeedViewPost } from '@atproto/api/dist/client/types/app/bsky/feed/defs'
 
-// このクラスは使わない
+// リアルタイム購読（使わない）
 // export class FirehoseSubscription extends FirehoseSubscriptionBase {
 //   async handleEvent(evt: RepoEvent) {
 //     if (!isCommit(evt)) return
@@ -53,11 +52,11 @@ import { createHash } from 'crypto'
 //     }
 //   }
 // }
-
+dotenv.config()
 export class ListMembersSubscription {
   agent: AtpAgent
   private actors_arr: { did: string; listUri: string }[] = []
-  private lastFetchDate: string | null = null // yyyy-mm-dd
+  private lastFetchDate: string | null = null
 
   constructor(public db: Database) {
     this.agent = new AtpAgent({
@@ -66,16 +65,19 @@ export class ListMembersSubscription {
   }
 
   async run() {
-    await this.updateActorsIfNeeded() // 初回ユーザー取得
-    await this.reload() // 初回投稿取得
+    await this.updateActorsIfNeeded() // ユーザー取得
+    await this.reload() // 投稿取得
   }
 
   // 取得対象ユーザーは1日1回更新
   private async updateActorsIfNeeded() {
     const today = new Date().toISOString().slice(0, 10) // yyyy-mm-dd
-    if (this.lastFetchDate === today && this.actors_arr.length > 0) return
+    if (
+      this.lastFetchDate?.slice(0, 10) === today &&
+      this.actors_arr.length > 0
+    )
+      return
 
-    dotenv.config()
     const identifier = process.env.FEEDGEN_PUBLISHER_DID || ''
     const password = process.env.FEEDGEN_PUBLISH_APP_PASSWORD || ''
 
@@ -94,18 +96,11 @@ export class ListMembersSubscription {
     if (!lists) {
       throw new Error('リストが設定されていません')
     }
-    lists.map((uri) => {
-      const shortname = createHash('sha256')
-        .update(uri)
-        .digest('hex')
-        .slice(0, 16)
-      console.log(shortname)
-    })
     const newActors: { did: string; listUri: string }[] = []
 
     for (const list of lists) {
+      // リスト内ユーザー取得
       let cursor: string | undefined = undefined
-
       do {
         const membersRes = await this.safeApiCall(() =>
           this.agent.app.bsky.graph.getList({
@@ -125,109 +120,99 @@ export class ListMembersSubscription {
     }
 
     this.actors_arr = newActors
-    this.lastFetchDate = today
-    console.log(this.lastFetchDate)
   }
 
-  // 投稿取得（10分ごと定期実行）
+  // 投稿取得（定期実行）
   async reload() {
     await this.updateActorsIfNeeded()
 
-    let totalInserted = 0
-    let totalSkipped = 0
-    let totalNoImage = 0
-    const minTimestamps: string[] = []
+    for (const actor of this.actors_arr) {
+      let oldest: string | null = null
+      const limits = [3, 10, 30, 100]
+      let postsArray: FeedViewPost[] = []
 
-    for (let actor of this.actors_arr) {
-      const params_feed: QueryParamsFeeds = {
-        actor: actor.did,
-        limit: 10,
-        filter: 'posts_with_replies',
-      }
+      for (let limit of limits) {
+        // 初回フェッチは10件取得
+        if (!this.lastFetchDate) limit = 10
 
-      let insertedCount = 0
-      let skippedCount = 0
-      let noimageCount = 0
-      let oldestIndexedAt: string | null = null
+        try {
+          const { data: data_feed } = await this.agent.getAuthorFeed({
+            actor: actor.did,
+            limit,
+            filter: 'posts_with_replies',
+          })
+          postsArray = data_feed.feed
 
-      try {
-        const { data: data_feed } = await this.agent.getAuthorFeed(params_feed)
-        const postsArray = data_feed.feed
+          // 最も古い投稿のindexedAtを確認
+          oldest =
+            (postsArray.at(-1)?.reason?.indexedAt as string) ??
+            (postsArray.at(-1)?.post.indexedAt as string) ??
+            null
 
-        for (const post of postsArray) {
-          const uri = post.post.uri
-
-          // すでに存在していたらスキップ
-          const exists = await this.db
-            .selectFrom('post')
-            .select(['uri'])
-            .where('uri', '=', uri)
-            .where('listUri', '=', actor.listUri)
-            .executeTakeFirst()
-
-          if (exists) {
-            skippedCount++
-            continue
-          }
-          // 画像があるか確認
-          const embed = post.post.embed
-          let hasImage = false
-          if (embed?.images || embed?.$type === 'app.bsky.embed.images#views') {
-            hasImage = true
-          }
-
-          // indexedAt: リポスト日時を元投稿日時より優先
-          const indexedAt =
-            (post.reason?.indexedAt as string) ?? post.post.indexedAt
+          // 前回取得より古いポストを取得したらループを抜ける
           if (
-            !oldestIndexedAt ||
-            new Date(indexedAt) < new Date(oldestIndexedAt)
+            !oldest ||
+            !this.lastFetchDate ||
+            new Date(oldest) <= new Date(this.lastFetchDate)
           ) {
-            oldestIndexedAt = indexedAt
+            break
+          } else if (limit === 100) {
+            console.log(
+              '上限まで投稿を取得しましたが、未取得の投稿が存在する可能性があります',
+            )
           }
-          if (!hasImage) {
-            noimageCount++
-            continue
-          }
-
-          const postsToCreate = {
-            uri: uri,
-            cid: post.post.cid,
-            listUri: actor.listUri,
-            indexedAt: indexedAt,
-          }
-
-          try {
-            await this.db
-              .insertInto('post')
-              .values(postsToCreate)
-              .onConflict((oc) => oc.doNothing())
-              .execute()
-            insertedCount++
-          } catch (err) {
-            console.error(`[ERROR] DB挿入失敗: ${postsToCreate.uri}`, err)
-          }
+        } catch (e) {
+          console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
         }
-        // 最古のタイムスタンプを保存
-        if (oldestIndexedAt) {
-          minTimestamps.push(oldestIndexedAt)
+      }
+
+      for (const post of postsArray) {
+        const uri = post.post.uri
+
+        // 既にDBにあるポストは無視する
+        const exists = await this.db
+          .selectFrom('post')
+          .select(['uri'])
+          .where('uri', '=', uri)
+          .where('listUri', '=', actor.listUri)
+          .executeTakeFirst()
+
+        if (exists) continue
+
+        // 画像の有無をチェック
+        const embed = post.post.embed
+        const hasImage = !!(
+          embed?.images || embed?.$type === 'app.bsky.embed.images#views'
+        )
+
+        if (!hasImage) continue
+
+        // indexedAtはリポスト日時が優先
+        const indexedAt =
+          (post.reason?.indexedAt as string) ?? post.post.indexedAt
+
+        const postsToCreate = {
+          uri,
+          cid: post.post.cid,
+          listUri: actor.listUri,
+          indexedAt,
         }
-        totalInserted += insertedCount
-        totalSkipped += skippedCount
-        totalNoImage += noimageCount
-      } catch (e) {
-        console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
+
+        try {
+          await this.db
+            .insertInto('post')
+            .values(postsToCreate)
+            .onConflict((oc) => oc.doNothing())
+            .execute()
+        } catch (err) {
+          console.error(`[ERROR] DB挿入失敗: ${postsToCreate.uri}`, err)
+        }
       }
     }
-    if (minTimestamps.length > 0) {
-      const latestOfMin = minTimestamps.reduce((a, b) =>
-        new Date(a) > new Date(b) ? a : b,
-      )
-      console.log(`🕒 漏れなく取れた時間 ${latestOfMin}`)
-    }
-    console.log(
-      `合計 追加: ${totalInserted}件 / 重複: ${totalSkipped}件 / 画像なし: ${totalNoImage}件`,
-    )
+
+    // 今回のフェッチ時刻を記録
+    this.lastFetchDate = new Date().toISOString()
+    console.log(`[INFO] フェッチ完了: ${this.lastFetchDate} (UTC)`)
   }
 
   // APIエラー時のリトライ処理
