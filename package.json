@@ -9,6 +9,7 @@
   "scripts": {
     "publishFeed": "ts-node scripts/publishFeedGen.ts",
     "unpublishFeed": "ts-node scripts/unpublishFeedGen.ts",
+    "testfetch": "ts-node scripts/testfetch.ts",
     "start": "ts-node src/index.ts",
     "build": "tsc"
   },

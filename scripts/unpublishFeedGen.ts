@@ -11,7 +11,7 @@ const run = async () => {
     !process.env.FEEDGEN_PUBLISHER_HANDLE ||
     !process.env.FEEDGEN_PUBLISH_APP_PASSWORD
   ) {
-    throw new Error('Please provide your IDPW in the .env file')
+    throw new Error('環境変数 IDENTIFIER または PASSWORD が設定されていません')
   }
 
   const handle = process.env.FEEDGEN_PUBLISHER_HANDLE
