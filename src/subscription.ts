@@ -132,8 +132,8 @@ export class ListMembersSubscription {
       let postsArray: FeedViewPost[] = []
 
       for (let limit of limits) {
-        // 初回フェッチは10件取得
-        if (!this.lastFetchDate) limit = 10
+        // 初回フェッチは100件まで取得
+        if (!this.lastFetchDate && limit < 100) continue
 
         try {
           const { data: data_feed } = await this.agent.getAuthorFeed({
