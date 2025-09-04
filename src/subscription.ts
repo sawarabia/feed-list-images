@@ -56,12 +56,18 @@ dotenv.config()
 export class ListMembersSubscription {
   agent: AtpAgent
   private actors_arr: { did: string; listUri: string }[] = []
-  private lastFetchDate: string | null = null
+  private nextFetchTargetDateTime: string
+  private lastListRefreshDate: string
+  private postRetentionDays: number
 
   constructor(public db: Database) {
     this.agent = new AtpAgent({
       service: 'https://bsky.social',
     })
+    this.postRetentionDays = Number(process.env.POST_RETENTION_DAYS ?? '30')
+    if (isNaN(this.postRetentionDays) || this.postRetentionDays <= 0) {
+      throw new Error('環境変数 POST_RETENTION_DAYS の値が無効です')
+    }
   }
 
   async run() {
@@ -72,11 +78,15 @@ export class ListMembersSubscription {
   // 取得対象ユーザーは1日1回更新
   private async updateActorsIfNeeded() {
     const today = new Date().toISOString().slice(0, 10) // yyyy-mm-dd
-    if (
-      this.lastFetchDate?.slice(0, 10) === today &&
-      this.actors_arr.length > 0
-    )
-      return
+    if (this.lastListRefreshDate === today && this.actors_arr.length > 0) return
+
+    // DBをクリア
+    await this.db.deleteFrom('post').execute()
+
+    // 次回フェッチは保存期間全体が対象
+    this.nextFetchTargetDateTime = new Date(
+      Date.now() - this.postRetentionDays * 864e5,
+    ).toISOString()
 
     const identifier = process.env.FEEDGEN_PUBLISHER_DID || ''
     const password = process.env.FEEDGEN_PUBLISH_APP_PASSWORD || ''
@@ -120,27 +130,25 @@ export class ListMembersSubscription {
     }
 
     this.actors_arr = newActors
+    this.lastListRefreshDate = today
   }
 
   // 投稿取得（定期実行）
   async reload() {
     await this.updateActorsIfNeeded()
     const limits = [3, 10, 30, 100]
-    const fetchCountStats: Record<number, number> = {
-      3: 0,
-      10: 0,
-      30: 0,
-      100: 0,
-    }
+    const fetchCountStats: Record<number, number> = Object.fromEntries(
+      limits.map((limit) => [limit, 0]),
+    )
+    const currentfetchTargetDateTime = this.nextFetchTargetDateTime
+    this.nextFetchTargetDateTime = new Date().toISOString()
+    console.log(`[INFO] フェッチ開始: ${this.nextFetchTargetDateTime} (UTC)`)
 
     for (const actor of this.actors_arr) {
       let oldest: string | null = null
       let postsArray: FeedViewPost[] = []
 
       for (let limit of limits) {
-        // 初回フェッチは100件まで取得
-        if (!this.lastFetchDate && limit < 100) continue
-
         try {
           const { data: data_feed } = await this.agent.getAuthorFeed({
             actor: actor.did,
@@ -149,26 +157,23 @@ export class ListMembersSubscription {
           })
           postsArray = data_feed.feed
 
-          // 最も古い投稿のindexedAtを確認
-          oldest =
-            (postsArray.at(-1)?.reason?.indexedAt as string) ??
-            (postsArray.at(-1)?.post.indexedAt as string) ??
-            null
-
-          // 前回取得より古いポストを取得したらループを抜ける
-          if (
-            !oldest ||
-            !this.lastFetchDate ||
-            new Date(oldest) <= new Date(this.lastFetchDate)
-          ) {
+          // 全てのポストを取得したらループを抜ける
+          if (postsArray.length < limit) {
             fetchCountStats[limit]++
             break
-          } else if (limit === 100) {
-            console.log(
-              '上限まで投稿を取得しましたが、未取得の投稿が存在する可能性があります',
-            )
           }
-          fetchCountStats[limit]++
+          // 取得期間より古い投稿を取得したらループを抜ける
+          oldest =
+            (postsArray.at(-1)?.reason?.indexedAt as string) ??
+            (postsArray.at(-1)?.post.indexedAt as string)
+          if (new Date(oldest) <= new Date(currentfetchTargetDateTime)) {
+            fetchCountStats[limit]++
+            break
+          }
+          // limitの上限まで取得したら終了
+          if (limit === limits.at(-1)) {
+            fetchCountStats[limit]++
+          }
         } catch (e) {
           console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
         }
@@ -187,7 +192,7 @@ export class ListMembersSubscription {
 
         if (exists) continue
 
-        // 画像の有無をチェック
+        // 画像がないポストは無視する
         const embed = post.post.embed
         const hasImage = !!(
           embed?.images || embed?.$type === 'app.bsky.embed.images#views'
@@ -206,23 +211,17 @@ export class ListMembersSubscription {
           indexedAt,
         }
 
-        try {
-          await this.db
-            .insertInto('post')
-            .values(postsToCreate)
-            .onConflict((oc) => oc.doNothing())
-            .execute()
-        } catch (err) {
-          console.error(`[ERROR] DB挿入失敗: ${postsToCreate.uri}`, err)
-        }
+        await this.db
+          .insertInto('post')
+          .values(postsToCreate)
+          .onConflict((oc) => oc.doNothing())
+          .execute()
       }
     }
 
-    // 今回のフェッチ時刻を記録
-    this.lastFetchDate = new Date().toISOString()
-    console.log(`[INFO] フェッチ完了: ${this.lastFetchDate} (UTC)`)
+    console.log(`[INFO] フェッチ完了: ${new Date().toISOString()} (UTC)`)
     // 統計出力
-    console.log('[INFO] 投稿取得に使われた件数の統計:')
+    console.log('内訳:')
     for (const limit of limits) {
       console.log(`  - ${limit}件で取得完了: ${fetchCountStats[limit]}人`)
     }
