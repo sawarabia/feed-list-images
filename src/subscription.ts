@@ -57,36 +57,66 @@ export class ListMembersSubscription {
   agent: AtpAgent
   private actors_arr: { did: string; listUri: string }[] = []
   private nextFetchTargetDateTime: string
-  private lastListRefreshDate: string
-  private postRetentionDays: number
+  private lastFeedRefreshDate: string
 
   constructor(public db: Database) {
     this.agent = new AtpAgent({
       service: 'https://bsky.social',
     })
-    this.postRetentionDays = Number(process.env.POST_RETENTION_DAYS ?? '30')
-    if (isNaN(this.postRetentionDays) || this.postRetentionDays <= 0) {
-      throw new Error('環境変数 POST_RETENTION_DAYS の値が無効です')
-    }
   }
 
   async run() {
-    await this.updateActorsIfNeeded() // ユーザー取得
-    await this.reload() // 投稿取得
+    await this.reload()
   }
 
-  // 取得対象ユーザーは1日1回更新
-  private async updateActorsIfNeeded() {
+  // 投稿取得（定期実行）
+  async reload() {
+    const feedRefreshed = await this.refreshFeedIfNeeded()
+    const limits = feedRefreshed ? [100] : [3, 10, 30, 100]
+    const fetchCountStats: Record<number, number> = Object.fromEntries(
+      limits.map((limit) => [limit, 0]),
+    )
+    const currentFetchTargetDateTime = this.nextFetchTargetDateTime
+    this.nextFetchTargetDateTime = new Date().toISOString()
+
+    console.log(`[INFO] ポスト取得開始: ${this.nextFetchTargetDateTime} (UTC)`)
+
+    for (const actor of this.actors_arr) {
+      try {
+        const { posts, usedLimit } = await this.fetchPostsForActor(
+          actor,
+          limits,
+          currentFetchTargetDateTime,
+        )
+        fetchCountStats[usedLimit]++
+        await this.savePosts(posts, actor)
+      } catch (e) {
+        console.warn(`[WARN] ポスト取得失敗: ${actor.did} - ${e}`)
+      }
+    }
+
+    console.log(`[INFO] ポスト取得完了: ${new Date().toISOString()} (UTC)`)
+    // 統計出力
+    console.log('[INFO] 内訳:')
+    for (const limit of limits) {
+      console.log(
+        `[INFO]   - ${limit}件で取得完了: ${fetchCountStats[limit]}人`,
+      )
+    }
+  }
+
+  // 日次のフィードリフレッシュ
+  private async refreshFeedIfNeeded() {
     const today = new Date().toISOString().slice(0, 10) // yyyy-mm-dd
-    if (this.lastListRefreshDate === today && this.actors_arr.length > 0) return
+    if (this.lastFeedRefreshDate === today && this.actors_arr.length > 0) {
+      console.log(
+        `[INFO] リスト更新スキップ: ${new Date().toISOString()} (UTC)`,
+      )
+      return false
+    }
 
     // DBをクリア
     await this.db.deleteFrom('post').execute()
-
-    // 次回フェッチは保存期間全体が対象
-    this.nextFetchTargetDateTime = new Date(
-      Date.now() - this.postRetentionDays * 864e5,
-    ).toISOString()
 
     const identifier = process.env.FEEDGEN_PUBLISHER_DID || ''
     const password = process.env.FEEDGEN_PUBLISH_APP_PASSWORD || ''
@@ -107,7 +137,7 @@ export class ListMembersSubscription {
       throw new Error('リストが設定されていません')
     }
     const newActors: { did: string; listUri: string }[] = []
-
+    console.log(`[INFO] リスト更新開始: ${new Date().toISOString()} (UTC)`)
     for (const list of lists) {
       // リスト内ユーザー取得
       let cursor: string | undefined = undefined
@@ -130,100 +160,71 @@ export class ListMembersSubscription {
     }
 
     this.actors_arr = newActors
-    this.lastListRefreshDate = today
+    this.lastFeedRefreshDate = today
+    console.log(`[INFO] リスト更新完了: ${new Date().toISOString()} (UTC)`)
+    return true
   }
 
-  // 投稿取得（定期実行）
-  async reload() {
-    await this.updateActorsIfNeeded()
-    const limits = [3, 10, 30, 100]
-    const fetchCountStats: Record<number, number> = Object.fromEntries(
-      limits.map((limit) => [limit, 0]),
-    )
-    const currentfetchTargetDateTime = this.nextFetchTargetDateTime
-    this.nextFetchTargetDateTime = new Date().toISOString()
-    console.log(`[INFO] フェッチ開始: ${this.nextFetchTargetDateTime} (UTC)`)
+  // 特定ユーザーの投稿取得
+  private async fetchPostsForActor(
+    actor: { did: string; listUri: string },
+    limits: number[],
+    targetDateTime: string,
+  ): Promise<{ posts: FeedViewPost[]; usedLimit: number }> {
+    let postsArray: FeedViewPost[] = []
 
-    for (const actor of this.actors_arr) {
-      let oldest: string | null = null
-      let postsArray: FeedViewPost[] = []
+    for (const limit of limits) {
+      const { data } = await this.agent.getAuthorFeed({
+        actor: actor.did,
+        limit,
+        filter: 'posts_with_replies',
+      })
 
-      for (let limit of limits) {
-        try {
-          const { data: data_feed } = await this.agent.getAuthorFeed({
-            actor: actor.did,
-            limit,
-            filter: 'posts_with_replies',
-          })
-          postsArray = data_feed.feed
+      postsArray = data.feed
 
-          // 全てのポストを取得したらループを抜ける
-          if (postsArray.length < limit) {
-            fetchCountStats[limit]++
-            break
-          }
-          // 取得期間より古い投稿を取得したらループを抜ける
-          oldest =
-            (postsArray.at(-1)?.reason?.indexedAt as string) ??
-            (postsArray.at(-1)?.post.indexedAt as string)
-          if (new Date(oldest) <= new Date(currentfetchTargetDateTime)) {
-            fetchCountStats[limit]++
-            break
-          }
-          // limitの上限まで取得したら終了
-          if (limit === limits.at(-1)) {
-            fetchCountStats[limit]++
-          }
-        } catch (e) {
-          console.warn(`[WARN] 投稿取得失敗: ${actor.did} - ${e}`)
-        }
+      const oldest =
+        (postsArray.at(-1)?.reason?.indexedAt as string) ??
+        (postsArray.at(-1)?.post.indexedAt as string)
+
+      if (
+        postsArray.length < limit ||
+        new Date(oldest) <= new Date(targetDateTime)
+      ) {
+        return { posts: postsArray, usedLimit: limit }
       }
+    }
+    // 取得しきれなかった場合でも最後の結果を返す
+    return { posts: postsArray, usedLimit: limits.at(-1)! }
+  }
 
-      for (const post of postsArray) {
-        const uri = post.post.uri
+  // 取得した投稿をDBに保存
+  private async savePosts(
+    posts: FeedViewPost[],
+    actor: { did: string; listUri: string },
+  ) {
+    for (const post of posts) {
+      // 画像ありで絞り込み
+      const embed = post.post.embed
+      const hasImage = !!(
+        embed?.images || embed?.$type === 'app.bsky.embed.images#views'
+      )
 
-        // 既にDBにあるポストは無視する
-        const exists = await this.db
-          .selectFrom('post')
-          .select(['uri'])
-          .where('uri', '=', uri)
-          .where('listUri', '=', actor.listUri)
-          .executeTakeFirst()
+      if (!hasImage) continue
 
-        if (exists) continue
+      // indexedAtはリポスト日時が優先
+      const indexedAt =
+        (post.reason?.indexedAt as string) ?? post.post.indexedAt
 
-        // 画像がないポストは無視する
-        const embed = post.post.embed
-        const hasImage = !!(
-          embed?.images || embed?.$type === 'app.bsky.embed.images#views'
-        )
-
-        if (!hasImage) continue
-
-        // indexedAtはリポスト日時が優先
-        const indexedAt =
-          (post.reason?.indexedAt as string) ?? post.post.indexedAt
-
-        const postsToCreate = {
-          uri,
+      await this.db
+        .insertInto('post')
+        .values({
+          uri: post.post.uri,
           cid: post.post.cid,
           listUri: actor.listUri,
           indexedAt,
-        }
-
-        await this.db
-          .insertInto('post')
-          .values(postsToCreate)
-          .onConflict((oc) => oc.doNothing())
-          .execute()
-      }
-    }
-
-    console.log(`[INFO] フェッチ完了: ${new Date().toISOString()} (UTC)`)
-    // 統計出力
-    console.log('内訳:')
-    for (const limit of limits) {
-      console.log(`  - ${limit}件で取得完了: ${fetchCountStats[limit]}人`)
+        })
+        .onConflict((oc) => oc.doNothing())
+        .execute()
     }
   }
 
