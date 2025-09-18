@@ -13,10 +13,10 @@ migrations['001'] = {
     await db.schema
       .createTable('post')
       .addColumn('uri', 'varchar', (col) => col.notNull())
-      .addColumn('listUri', 'varchar', (col) => col.notNull())
+      .addColumn('shortname', 'varchar', (col) => col.notNull())
       .addColumn('cid', 'varchar', (col) => col.notNull())
       .addColumn('indexedAt', 'varchar', (col) => col.notNull())
-      .addPrimaryKeyConstraint('post_pkey', ['uri', 'listUri'])
+      .addPrimaryKeyConstraint('post_pkey', ['uri', 'shortname'])
       .execute()
     await db.schema
       .createTable('sub_state')

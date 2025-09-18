@@ -1,25 +1,44 @@
 import { QueryParams } from '../lexicon/types/app/bsky/feed/getFeedSkeleton'
 import { AppContext } from '../config'
-import { createHash } from 'crypto'
-import { createListHandler } from './lists'
-import dotenv from 'dotenv'
 
-dotenv.config()
-// 環境変数からリストURI配列を取得
-const listUris = process.env.FEEDGEN_LIST_URIS?.split(',')
-if (!listUris) {
-  throw new Error('リストが設定されていません')
+const createListHandler = (shortname: string) => {
+  const handler = async (ctx: AppContext, params: QueryParams) => {
+    let builder = ctx.db
+      .selectFrom('post')
+      .selectAll()
+      .where('shortname', '=', shortname)
+      .orderBy('indexedAt', 'desc')
+      .orderBy('cid', 'desc')
+      .limit(params.limit)
+
+    if (params.cursor) {
+      const timeStr = new Date(parseInt(params.cursor, 10)).toISOString()
+      builder = builder.where('post.indexedAt', '<', timeStr)
+    }
+
+    const res = await builder.execute()
+
+    const feed = res.map((row) => ({
+      post: row.uri,
+    }))
+
+    let cursor: string | undefined
+    const last = res.at(-1)
+    if (last) {
+      cursor = new Date(last.indexedAt).getTime().toString(10)
+    }
+
+    return {
+      cursor,
+      feed,
+    }
+  }
+
+  return handler
 }
 
-const algos = Object.fromEntries(
-  listUris.map((uri) => {
-    const handler = createListHandler(uri)
-    const shortname = createHash('sha256')
-      .update(uri)
-      .digest('hex')
-      .slice(0, 16)
-    return [shortname, handler]
-  }),
-)
+function algos(shortname: string) {
+  return createListHandler(shortname)
+}
 
 export default algos

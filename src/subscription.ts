@@ -7,6 +7,7 @@ import { FirehoseSubscriptionBase, getOpsByType } from './util/subscription'
 import { Database } from './db'
 import dotenv from 'dotenv'
 import { FeedViewPost } from '@atproto/api/dist/client/types/app/bsky/feed/defs'
+import { createHash } from 'crypto'
 
 // リアルタイム購読（使わない）
 // export class FirehoseSubscription extends FirehoseSubscriptionBase {
@@ -55,7 +56,7 @@ import { FeedViewPost } from '@atproto/api/dist/client/types/app/bsky/feed/defs'
 dotenv.config()
 export class ListMembersSubscription {
   agent: AtpAgent
-  private actors_arr: { did: string; listUri: string }[] = []
+  private actors_arr: { did: string; shortname: string }[] = []
   private nextFetchTargetDateTime: string
   private lastFeedRefreshDate: string
 
@@ -132,13 +133,26 @@ export class ListMembersSubscription {
     const did = this.agent.session?.did
     if (!did) throw new Error('ログインに失敗しました')
 
-    const lists = process.env.FEEDGEN_LIST_URIS?.split(',')
+    let lists = process.env.FEEDGEN_LIST_URIS?.split(',')
     if (!lists) {
-      throw new Error('リストが設定されていません')
+      try {
+        const res = await this.safeApiCall(() =>
+          this.agent.app.bsky.graph.getLists({
+            actor: identifier,
+          }),
+        )
+        lists = res.data.lists.map((list) => list.uri)
+      } catch (e) {
+        throw new Error('リストの取得に失敗しました')
+      }
     }
-    const newActors: { did: string; listUri: string }[] = []
+    const newActors: { did: string; shortname: string }[] = []
     console.log(`[INFO] リスト更新開始: ${new Date().toISOString()} (UTC)`)
     for (const list of lists) {
+      const shortname = createHash('sha256')
+        .update(list)
+        .digest('hex')
+        .slice(0, 16)
       // リスト内ユーザー取得
       let cursor: string | undefined = undefined
       do {
@@ -151,7 +165,7 @@ export class ListMembersSubscription {
 
         const entries = membersRes.data.items.map((item) => ({
           did: item.subject.did,
-          listUri: list,
+          shortname: shortname,
         }))
         newActors.push(...entries)
 
@@ -167,7 +181,7 @@ export class ListMembersSubscription {
 
   // 特定ユーザーの投稿取得
   private async fetchPostsForActor(
-    actor: { did: string; listUri: string },
+    actor: { did: string; shortname: string },
     limits: number[],
     targetDateTime: string,
   ): Promise<{ posts: FeedViewPost[]; usedLimit: number }> {
@@ -200,7 +214,7 @@ export class ListMembersSubscription {
   // 取得した投稿をDBに保存
   private async savePosts(
     posts: FeedViewPost[],
-    actor: { did: string; listUri: string },
+    actor: { did: string; shortname: string },
   ) {
     for (const post of posts) {
       // 画像ありで絞り込み
@@ -220,7 +234,7 @@ export class ListMembersSubscription {
         .values({
           uri: post.post.uri,
           cid: post.post.cid,
-          listUri: actor.listUri,
+          shortname: actor.shortname,
           indexedAt,
         })
         .onConflict((oc) => oc.doNothing())
