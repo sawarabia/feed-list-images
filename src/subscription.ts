@@ -7,7 +7,7 @@ import { FirehoseSubscriptionBase, getOpsByType } from './util/subscription'
 import { Database } from './db'
 import dotenv from 'dotenv'
 import { FeedViewPost } from '@atproto/api/dist/client/types/app/bsky/feed/defs'
-import { createHash } from 'crypto'
+import { AppContext, Config, List } from './config'
 
 // リアルタイム購読（使わない）
 // export class FirehoseSubscription extends FirehoseSubscriptionBase {
@@ -55,16 +55,16 @@ import { createHash } from 'crypto'
 // }
 dotenv.config()
 export class ListMembersSubscription {
-  agent: AtpAgent
   private actors_arr: { did: string; shortname: string }[] = []
   private nextFetchTargetDateTime: string
   private lastFeedRefreshDate: string
 
-  constructor(public db: Database) {
-    this.agent = new AtpAgent({
-      service: 'https://bsky.social',
-    })
-  }
+  constructor(
+    public agent: AtpAgent,
+    public db: Database,
+    public cfg: Config,
+    public lists: List[],
+  ) {}
 
   async run() {
     await this.reload()
@@ -119,53 +119,22 @@ export class ListMembersSubscription {
     // DBをクリア
     await this.db.deleteFrom('post').execute()
 
-    const identifier = process.env.FEEDGEN_PUBLISHER_DID || ''
-    const password = process.env.FEEDGEN_PUBLISH_APP_PASSWORD || ''
-
-    if (!identifier || !password) {
-      throw new Error(
-        '環境変数 IDENTIFIER または PASSWORD が設定されていません',
-      )
-    }
-
-    await this.safeApiCall(() => this.agent.login({ identifier, password }))
-
-    const did = this.agent.session?.did
-    if (!did) throw new Error('ログインに失敗しました')
-
-    let lists = process.env.FEEDGEN_LIST_URIS?.split(',')
-    if (!lists) {
-      try {
-        const res = await this.safeApiCall(() =>
-          this.agent.app.bsky.graph.getLists({
-            actor: identifier,
-          }),
-        )
-        lists = res.data.lists.map((list) => list.uri)
-      } catch (e) {
-        throw new Error('リストの取得に失敗しました')
-      }
-    }
     const newActors: { did: string; shortname: string }[] = []
     console.log(`[INFO] リスト更新開始: ${new Date().toISOString()} (UTC)`)
-    for (const list of lists) {
-      const shortname = createHash('sha256')
-        .update(list)
-        .digest('hex')
-        .slice(0, 16)
+    for (const list of this.lists) {
       // リスト内ユーザー取得
       let cursor: string | undefined = undefined
       do {
         const membersRes = await this.safeApiCall(() =>
           this.agent.app.bsky.graph.getList({
-            list: list,
+            list: list.uri,
             cursor,
           }),
         )
 
         const entries = membersRes.data.items.map((item) => ({
           did: item.subject.did,
-          shortname: shortname,
+          shortname: list.shortname,
         }))
         newActors.push(...entries)
 

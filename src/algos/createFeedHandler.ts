@@ -1,7 +1,7 @@
 import { QueryParams } from '../lexicon/types/app/bsky/feed/getFeedSkeleton'
 import { AppContext } from '../config'
 
-const createListHandler = (shortname: string) => {
+const createFeedHandler = (shortname: string) => {
   const handler = async (ctx: AppContext, params: QueryParams) => {
     let builder = ctx.db
       .selectFrom('post')
@@ -37,8 +37,4 @@ const createListHandler = (shortname: string) => {
   return handler
 }
 
-function algos(shortname: string) {
-  return createListHandler(shortname)
-}
-
-export default algos
+export default createFeedHandler
